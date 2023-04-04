@@ -125,8 +125,6 @@ if __name__ == '__main__':
                 meaning_guess = agent2.listener(message, context)
                 logs[_]['message'] = message
                 logs[_]['meaning_guess'] = meaning_guess
-                logs[_]['lexicon_1'] = lex_to_str(agent1.get_lexicon()[0])
-                logs[_]['lexicon_2'] = lex_to_str(agent1.get_lexicon()[0])
                 if meaning_guess == meaning:
                     logs[_]['correct'] = True
                     agent1.update_lexicon(message, meaning)
@@ -138,14 +136,14 @@ if __name__ == '__main__':
                 meaning_guess = agent1.listener(message, context)  
                 logs[_]['message'] = message
                 logs[_]['meaning_guess'] = meaning_guess
-                logs[_]['lexicon_1'] = lex_to_str(agent1.get_lexicon()[0])
-                logs[_]['lexicon_2'] = lex_to_str(agent1.get_lexicon()[0])
                 if meaning_guess == meaning:
                     logs[_]['correct'] = True
                     agent1.update_lexicon(message, meaning)
                     agent2.update_lexicon(message, meaning)
                 else:
                     logs[_]['correct'] = False
+            logs[_]['lexicon_1'] = lex_to_str(agent1.get_lexicon()[0])
+            logs[_]['lexicon_2'] = lex_to_str(agent2.get_lexicon()[0])
         logs_comp.append(logs)
 
     logs_comb = pd.concat([pd.DataFrame(k).T.reset_index() for k in logs_comp]).reset_index(drop=True)
