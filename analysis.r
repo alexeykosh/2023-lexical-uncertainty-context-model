@@ -7,9 +7,9 @@ library(ppcor)
 theme_set(theme_bw())
 
 # Initializing the model
-n_iter <- 100
-alpha <- 10
-cost <- c(0, 10)
+n_iter <- 1000
+alpha <- 5
+cost <- c(0, 20)
 
 system2("python3",
         args = c("src/model/model.py",

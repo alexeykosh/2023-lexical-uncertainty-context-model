@@ -66,6 +66,7 @@ class Agent(BaseRSA):
         To-do:
 
         - Update on L_p instead of L_0?
+        - Add context to the update?
 
         NB: adding random noise to prevent agents getting stuck in local optima 
         '''
