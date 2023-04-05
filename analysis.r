@@ -8,7 +8,7 @@ theme_set(theme_bw())
 
 # Initializing the model
 n_iter <- 100
-alpha <- 5
+alpha <- 10
 cost <- c(0, 10)
 
 system2("python3",
@@ -19,7 +19,8 @@ system2("python3",
 )
 
 # Loading the data
-data <- read_csv("src/logs/logs-100-5.0.csv")
+# inser n_iter and alpha in the file name
+data <- read_csv(str_glue("src/logs/logs-{n_iter}-{alpha}.csv"))
 nrow(data)
 
 # convert the correct column to 1 or 0
@@ -29,7 +30,7 @@ data$correct <- as.numeric(data$correct)
 data <- data %>%
   group_by(trial) %>%
   # compute mean in the last 50 indices
-  mutate(avg_acc = mean(correct[index > 80]),
+  mutate(avg_acc = mean(correct[index > 50]),
   lexicon_last = last(lexicon_1)) %>%
   mutate(message_length = ifelse(message == 0, "short", "long"))
 
@@ -76,7 +77,6 @@ data %>%
   y = "Average accuracy", colour = "Lexicon") +
   scale_colour_viridis_d(option = "D")
 
-# plot how many time short and long messages were used with each meaning
 data %>%
   group_by(meaning_guess) %>%
   summarise(short = sum(message_length == "short") / n(),
