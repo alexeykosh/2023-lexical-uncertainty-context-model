@@ -151,5 +151,5 @@ if __name__ == '__main__':
     if not os.path.exists('src/logs/'):
         os.makedirs('src/logs/')
     
-    logs_comb.to_csv(f'src/logs/logs-{args.n_iter}-{args.alpha}.csv', index=False)
+    logs_comb.to_csv(f'src/logs/logs-{args.n_iter}-{int(args.alpha)}.csv', index=False)
     
