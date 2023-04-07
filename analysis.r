@@ -7,7 +7,7 @@ library(ppcor)
 theme_set(theme_bw())
 
 # Initializing the model
-n_iter <- 1000
+n_iter <- 100
 alpha <- 5
 cost <- c(0, 20)
 
@@ -30,8 +30,9 @@ data$correct <- as.numeric(data$correct)
 data <- data %>%
   group_by(trial) %>%
   # compute mean in the last 50 indices
-  mutate(avg_acc = mean(correct[index > 50]),
+  mutate(avg_acc = mean(correct[index > 80]),
   lexicon_last = last(lexicon_1)) %>%
+  filter(avg_acc >= 2 / 3) %>%
   mutate(message_length = ifelse(message == 0, "short", "long"))
 
 data %>%
@@ -63,19 +64,44 @@ data %>%
   y = "Density",
   title = "Average accuracy in the last 50 trials")
 
-data %>%
+avg_acc <- data %>%
   group_by(trial) %>%
-  mutate(index_long = index %% 10) %>%
-  filter(avg_acc >= 2 / 3) %>%
-  group_by(index_long, lexicon_last) %>%
-  summarise(correct = mean(correct))  %>%
-  ggplot(aes(x = index_long, y = correct, colour = lexicon_last)) +
-  geom_path() +
-  ylim(0, 1) +
-  geom_hline(yintercept = 2 / 3, colour = "red", linetype = "dashed") +
-  labs(x = "Trial number (grouped by 10)",
-  y = "Average accuracy", colour = "Lexicon") +
-  scale_colour_viridis_d(option = "D")
+  mutate(index_long = index %% 50, lexicon_last = last(lexicon_1)) %>%
+  mutate(lexicon_group = ifelse(lexicon_last %in% c("011100", "100011"),
+  "productive", "other")) %>%
+  group_by(index_long, lexicon_group) %>%
+  mutate(correct_mean = mean(correct),
+  se = sd(correct) / sqrt(n()),
+  lower = correct_mean - 1.96 * se,
+  upper = correct_mean + 1.96 * se) %>%
+  ggplot(aes(x = index_long, y = correct_mean, group = lexicon_group)) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = "grey70",
+  alpha=0.2) +
+  geom_hline(yintercept = 2 / 3, colour = "red", linetype = "dashed",
+  linewidth = 1, alpha = 1) +
+  geom_line(aes(color = lexicon_group), linewidth = 1) +
+  scale_color_brewer(palette = "Set2") +
+  # add legend title (Lexicon group)
+  guides(color = guide_legend(title = "Lexicon group")) +
+  labs(x = "Trial number",
+  y = "Average accuracy") +
+  # add legend for the ribbon
+  guides(fill = guide_legend(title = "95% confidence interval")) +
+  theme(plot.title = element_text(face = "bold", size = 12),
+  strip.text = element_text(size = 12),
+  strip.background = element_blank()) +
+  theme(legend.position = "bottom") +
+  scale_x_continuous(breaks = seq(0, 50, 10),
+  labels = seq(0, 100, 20)) +
+  facet_wrap(~lexicon_group)
+
+avg_acc
+
+# save avg_acc as pdf
+ggsave(filename = "figures/avg_acc.pdf",
+       plot = avg_acc,
+       width = 8,
+       height = 4)
 
 data %>%
   group_by(meaning_guess) %>%
