@@ -4,153 +4,146 @@ import argparse
 from tqdm.auto import trange
 import numpy as np
 import pandas as pd
-from util import (safelog, 
-                  normalize, 
+from util import (generate_lexicons, 
                   lex_to_str)
 
+np.seterr(divide='ignore', invalid='ignore')
+
+
 class BaseRSA:
-    def __init__(self, contexts, costs, alpha, prior):
+    def __init__(self, alpha, prior, C, contexts):
         self.contexts = contexts
-        self.costs = costs
         self.alpha = alpha
         self.prior = prior
- 
-    def L_0(self, A, context=None):
-        ''' Literal listener: normalizes the defined lexicon '''
-        if context is None:
-            return normalize(A * self.prior)
-        else:
-            return normalize(A * self.contexts[context] * self.prior)
-
-    def S_p(self, A, context=None):
-        ''' Pragmatic speaker: softmax over the defined lexicon taking costs into account '''
-        if context is None:
-            return normalize(np.exp(self.alpha * (safelog(self.L_0(A, None).T) + self.costs)))
-        else:
-            return normalize(np.exp(self.alpha * (safelog(self.L_0(A, context).T) + self.costs)))
-
-    def L_p(self, A, context=None):
-        ''' Pragmatic listener: normalizes the defined lexicon receiver from the pragmatic speaker '''
-        if context is None:
-            return normalize(self.S_p(A, None).T * self.prior)
-        else:
-            return normalize(self.S_p(A, context).T * self.contexts[context] * self.prior)
-        
-class Agent(BaseRSA):
-    def __init__(self, n_words, n_meanings, contexts, costs, alpha, prior):
-        BaseRSA.__init__(self, contexts, costs, alpha, prior)
-        self.lexicons = self.generate_lexicons(n_words, n_meanings)
-        self.lexicons_norm = np.array([normalize(lexicon) for lexicon in self.lexicons]) 
-        self.lexicon_probs = np.ones(len(self.lexicons)) / len(self.lexicons)
+        self.C = C
 
     @staticmethod
-    def generate_lexicons(n_words, n_meanings):
-        ''' Generate all possible productive lexicons (excluding option with null singals) '''
-        arrays =  np.array([list(map(int, list(np.binary_repr(i, width=n_words*n_meanings)))) 
-                            for i in range(2**(n_words*n_meanings))])
-        lexicons = arrays.reshape((2**(n_words*n_meanings), n_words, n_meanings))
-        return lexicons[lexicons.sum(axis=1).min(axis=1) > 0]
+    def safelog(vals):
+        with np.errstate(divide='ignore'):
+            return np.log(vals)
 
-    def speaker(self, meaning, context):
-        lexicon = self.lexicons[np.random.choice(len(self.lexicons), p=self.lexicon_probs)]
-        return self.S_p(lexicon, context)[meaning].argmax()
+    @staticmethod
+    def normalize(vals):
+        return np.nan_to_num(vals / np.sum(vals, axis=-1, keepdims=True))
     
-    def listener(self, message, context):
-        lexicon = self.lexicons[np.random.choice(len(self.lexicons), p=self.lexicon_probs)]
-        return self.L_p(lexicon, context)[message].argmax()
+    def L_0(self, L, c):
+        if c is None:
+            return self.normalize(L * self.prior)
+        return self.normalize(L * self.prior * self.contexts[c])
     
-    def update_lexicon(self, message, meaning):
-        ''' 
-        Get the posterior distribution over lexicons given the message and meaning
+    def S_p(self, L, c=None):
+        if c is None:
+            return self.normalize(np.exp(self.alpha * (self.safelog(self.L_0(L, c).transpose(0, 2, 1)) - self.C)))
+        return self.normalize(np.exp(self.alpha * (self.safelog(self.L_0(L, c).transpose(0, 2, 1)) - self.C)))
+    
+    def L_p(self, L, c=None):
+        if c is None:
+            return self.normalize(self.S_p(L, c).transpose(0, 2, 1) * self.prior)
+        return self.normalize(self.S_p(L, c).transpose(0, 2, 1) * self.prior * self.contexts[c])
 
-        To-do:
-
-        - Update on L_p instead of L_0?
-        - Add context to the update?
-
-        NB: adding random noise to prevent agents getting stuck in local optima 
-        '''
-        self.lexicon_probs = normalize(self.lexicon_probs * self.lexicons_norm[:, message, meaning] + 1e-5)
+class Agent(BaseRSA):
+    def __init__(self, alpha, prior, C, n_words, n_meanings, contexts):
+        super().__init__(alpha, prior, C, contexts)
+        self.Lexicons = generate_lexicons(n_words, n_meanings)
+        self.prob_lexicon = np.ones(len(self.Lexicons)) / len(self.Lexicons)
+        self.n_words = n_words
+        self.n_meanings = n_meanings
     
-    def get_lexicon(self):
-        ''' Get the lexicon with the highest probability '''
-        return self.lexicons[self.lexicon_probs.argmax()], self.lexicon_probs.argmax()
+    def speaker(self, m, c):
+        # index of the lexicon with the highest probability given prob_lexicon
+        lexicon_idx = np.random.choice(np.arange(len(self.Lexicons)), p=self.prob_lexicon)
+        return self.S_p(self.Lexicons, c)[lexicon_idx][m].argmax()
     
-    def L_p_max(self):
-        return self.L_p(self.lexicons[self.lexicon_probs.argmax()], None)
+    def listener(self, w, c):
+        # index of the lexicon with the highest probability given prob_lexicon
+        lexicon_idx = np.random.choice(np.arange(len(self.Lexicons)), p=self.prob_lexicon)
+        return self.L_p(self.Lexicons, c)[lexicon_idx][w].argmax()
+    
+    def update(self, w, m, c):
+        # self.prob_lexicon = self.normalize(self.L_p(self.Lexicons, c)[:, w, m] * self.prob_lexicon + 1e-5)
+        self.prob_lexicon = self.normalize(self.L_0(self.Lexicons, c)[:, w, m] * self.prob_lexicon  + 1e-5)
+        # self.prob_lexicon = self.normalize(self.normalize(self.Lexicons)[:, w, m] * self.prob_lexicon  + 1e-6)
+
+    def max_prob_L(self):
+        return lex_to_str(self.Lexicons[np.argmax(self.prob_lexicon)])
+    
+
+class Experiment:
+    def __init__(self, alpha, prior, C, contexts, n_iter, n_rounds):
+        self.n_iter = n_iter
+        self.n_rounds = n_rounds
+
+        self.logs = defaultdict(lambda: defaultdict(dict))
+        self.group_posterior = []
+
+        self.alpha = alpha
+        self.prior = prior
+        self.C = C
+        self.contexts = contexts
+        
+
+    def one_round(self, a, b, m, c, i, r):
+        w = a.speaker(m, c)
+        g = b.listener(w, c)
+        if m == g:
+            a.update(w, m, c)
+            b.update(w, m, c)
+        self.logs[i][r]['word'] = w
+        self.logs[i][r]['word_length'] = self.C[w]
+        self.logs[i][r]['guess'] = g
+        self.logs[i][r]['correct'] = 1 if (m == g) else 0
+        self.logs[i][r]['lexicon_a'] = a.max_prob_L()
+        self.logs[i][r]['lexicon_b'] = b.max_prob_L()
+    
+    def run(self):
+        for i in trange(self.n_iter, 
+                bar_format='{l_bar}{bar:30}{r_bar}{bar:-10b}',
+                desc='Running the model', 
+                position=0, 
+                leave=True):
+            self.agents = [Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts),
+                            Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts)]
+            for r in range(self.n_rounds):
+                m = np.random.choice([0, 1, 2], p=self.prior)
+                # if meaning is 0, context is either 0 or 1, if 1, context is 0, if 2 context is 1
+                c = np.random.choice([0, 1]) if m == 0 else m - 1
+                self.logs[i][r]['meaning'] = m
+                self.logs[i][r]['context'] = c
+                if r % 2 == 0:
+                    self.one_round(self.agents[0], 
+                                    self.agents[1], 
+                                    m, c, i, r)
+                else:
+                    self.one_round(self.agents[1], 
+                                    self.agents[0], 
+                                    m, c, i, r)
+            
+            self.group_posterior.append(self.agents[0].prob_lexicon)
+            self.group_posterior.append(self.agents[1].prob_lexicon)
+                        
+    def save(self):
+        df = pd.DataFrame.from_dict({(i, r): self.logs[i][r]
+                                        for i in self.logs.keys()
+                                        for r in self.logs[i].keys()},
+                                        orient='index').reset_index()
+        print(df.columns)
+        df.columns = ['trial', 'round', 'meaning', 'context', 'word', 'word_length', 'guess', 'correct', 'lexicon_a', 'lexicon_b']
+        df.to_csv(f'src/data/logs/logs-{self.n_iter}-{int(self.alpha)}.csv', index=False)
+        # posterior = np.sum(self.group_posterior, axis=0)
+        # return df, posterior/np.sum(posterior)
+          
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--n_iter', type=int)
     parser.add_argument('--alpha', type=float)
     parser.add_argument('--costs', type=str)
+    parser.add_argument('--priors', type=str)
     args = parser.parse_args()
-
-    # cost will be a list of costs for each meaning, converted to a numpy array
     args.costs = np.array(args.costs.split(',')).astype(float)
-
-    context_meanings = {0: [0, 1], 1: [0], 2: [1]}
-    CONTEXTS = np.array([[1, 1, 0], [1, 0, 1]])
-    N_MEANINGS = 3
-    N_WORDS = 2
-    PRIOR = normalize(np.array([1, 1, 1]))
-
-    logs_comp = []
-
-    for tr in trange(args.n_iter, 
-                    bar_format='{l_bar}{bar:30}{r_bar}{bar:-10b}',
-                    desc='Running the model', 
-                    position=0, 
-                    leave=True):
-        agent1 = Agent(n_words = N_WORDS, 
-                       n_meanings = N_MEANINGS, 
-                       contexts = CONTEXTS, 
-                       costs = args.costs, 
-                       alpha = args.alpha, 
-                       prior = PRIOR)
-        agent2 = Agent(n_words = N_WORDS, 
-                       n_meanings = N_MEANINGS, 
-                       contexts = CONTEXTS, 
-                       costs = args.costs, 
-                       alpha = args.alpha, 
-                       prior = PRIOR)
-        
-        logs = defaultdict(dict)
-
-        for _ in range(100):
-            meaning = np.random.randint(0, N_MEANINGS)
-            context = np.random.choice(context_meanings[meaning])
-            logs[_] = {'trial': tr, 'context': context, 'meaning': meaning}
-            if _ % 2 == 0:
-                message = agent1.speaker(meaning, context)
-                meaning_guess = agent2.listener(message, context)
-                logs[_]['message'] = message
-                logs[_]['meaning_guess'] = meaning_guess
-                if meaning_guess == meaning:
-                    logs[_]['correct'] = True
-                    agent1.update_lexicon(message, meaning)
-                    agent2.update_lexicon(message, meaning)
-                else:
-                    logs[_]['correct'] = False
-            else:
-                message = agent2.speaker(meaning, context)
-                meaning_guess = agent1.listener(message, context)  
-                logs[_]['message'] = message
-                logs[_]['meaning_guess'] = meaning_guess
-                if meaning_guess == meaning:
-                    logs[_]['correct'] = True
-                    agent1.update_lexicon(message, meaning)
-                    agent2.update_lexicon(message, meaning)
-                else:
-                    logs[_]['correct'] = False
-            logs[_]['lexicon_1'] = lex_to_str(agent1.get_lexicon()[0])
-            logs[_]['lexicon_2'] = lex_to_str(agent2.get_lexicon()[0])
-        logs_comp.append(logs)
-
-    logs_comb = pd.concat([pd.DataFrame(k).T.reset_index() for k in logs_comp]).reset_index(drop=True)
-    # if no folder "logs" exists in the "src" folder, create one in the same folder
-    if not os.path.exists('src/logs/'):
-        os.makedirs('src/logs/')
-    
-    logs_comb.to_csv(f'src/logs/logs-{args.n_iter}-{int(args.alpha)}.csv', index=False)
-    
+    args.priors = np.array(args.priors.split(',')).astype(float)
+    prior = args.priors / np.sum(args.priors)
+    contexts = np.array([[1, 1, 0], [1, 0, 1]])
+    exp = Experiment(args.alpha, prior, args.costs, contexts, args.n_iter, 100)
+    exp.run()
+    exp.save()
