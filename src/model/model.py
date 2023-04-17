@@ -59,10 +59,22 @@ class Agent(BaseRSA):
         lexicon_idx = np.random.choice(np.arange(len(self.Lexicons)), p=self.prob_lexicon)
         return self.L_p(self.Lexicons, c)[lexicon_idx][w].argmax()
     
-    def update(self, w, m, c):
-        # self.prob_lexicon = self.normalize(self.L_p(self.Lexicons, c)[:, w, m] * self.prob_lexicon + 1e-5)
-        self.prob_lexicon = self.normalize(self.L_0(self.Lexicons, c)[:, w, m] * self.prob_lexicon  + 1e-5)
-        # self.prob_lexicon = self.normalize(self.normalize(self.Lexicons)[:, w, m] * self.prob_lexicon  + 1e-6)
+    def update(self, w, m, c, correct, role):
+        if role == "speaker":
+            if correct:
+                self.prob_lexicon = self.normalize(self.S_p(self.Lexicons, c)[:, m, w] * self.prob_lexicon + 1e-5)
+            else:
+                self.prob_lexicon = self.normalize(self.S_p(self.Lexicons, c)[:, m, 1 - w] * self.prob_lexicon + 1e-5)
+        elif role == "listener":
+            if correct:
+                self.prob_lexicon = self.normalize(self.L_p(self.Lexicons, c)[:, w, m] 
+                * self.prob_lexicon + 1e-5)
+            else:
+                meanings = range(self.n_meanings)
+                for meaning in meanings:
+                    if meaning != m:
+                        self.prob_lexicon = self.normalize(self.L_p(self.Lexicons, c)[:, w, meaning]
+                         * self.prob_lexicon + 1e-5)
 
     def max_prob_L(self):
         return lex_to_str(self.Lexicons[np.argmax(self.prob_lexicon)])
@@ -85,9 +97,9 @@ class Experiment:
     def one_round(self, a, b, m, c, i, r):
         w = a.speaker(m, c)
         g = b.listener(w, c)
-        if m == g:
-            a.update(w, m, c)
-            b.update(w, m, c)
+        # if m == g:
+        a.update(w, m, c, m == g, "speaker")
+        b.update(w, m, c, m == g, "listener")
         self.logs[i][r]['word'] = w
         self.logs[i][r]['word_length'] = self.C[w]
         self.logs[i][r]['guess'] = g
@@ -96,11 +108,7 @@ class Experiment:
         self.logs[i][r]['lexicon_b'] = b.max_prob_L()
     
     def run(self):
-        for i in trange(self.n_iter, 
-                bar_format='{l_bar}{bar:30}{r_bar}{bar:-10b}',
-                desc='Running the model', 
-                position=0, 
-                leave=True):
+        for i in range(self.n_iter):
             self.agents = [Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts),
                             Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts)]
             for r in range(self.n_rounds):
@@ -126,11 +134,8 @@ class Experiment:
                                         for i in self.logs.keys()
                                         for r in self.logs[i].keys()},
                                         orient='index').reset_index()
-        print(df.columns)
         df.columns = ['trial', 'round', 'meaning', 'context', 'word', 'word_length', 'guess', 'correct', 'lexicon_a', 'lexicon_b']
         df.to_csv(f'src/data/logs/logs-{self.n_iter}-{int(self.alpha)}.csv', index=False)
-        # posterior = np.sum(self.group_posterior, axis=0)
-        # return df, posterior/np.sum(posterior)
           
 
 if __name__ == '__main__':
