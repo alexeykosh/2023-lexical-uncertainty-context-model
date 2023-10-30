@@ -136,7 +136,14 @@ class Experiment:
         self.C = C
         self.contexts = contexts
         self.model = model
-        
+
+    @staticmethod
+    def shuffle_stimuli(stimuli_arr):
+        rounds = len(stimuli_arr)
+        while any([stimuli_arr[i] == stimuli_arr[i+1] == 
+                   stimuli_arr[i+2] for i in range(rounds-2)]):
+            stimuli_arr = np.random.permutation(stimuli_arr)
+        return stimuli_arr        
 
     def one_round(self, a, b, m, c, i, r):
         w = a.speaker(m, c)
@@ -155,32 +162,39 @@ class Experiment:
     
     def run(self):
         for i in range(self.n_iter):
-            self.agents = [Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts, model=self.model),
-                            Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts, model=self.model)]
+            agents = [Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts, model=self.model),
+                      Agent(alpha=self.alpha, prior=self.prior, C=self.C, n_words=2, n_meanings=3, contexts=self.contexts, model=self.model)]
+            ind = int(self.n_rounds / 3)
+            # if meaning is 0, context is either 0 or 1, if 1, context is 0, if 2 context is 1
+            mc = self.shuffle_stimuli(['10'] * ind + 
+                                      ['21'] * ind + 
+                                      ['00'] * int(ind/2) + 
+                                      ['01'] * int(ind/2))
+
             for r in range(self.n_rounds):
-                m = np.random.choice([0, 1, 2], p=self.prior)
-                # if meaning is 0, context is either 0 or 1, if 1, context is 0, if 2 context is 1
-                c = np.random.choice([0, 1]) if m == 0 else m - 1
+                m = int(mc[r][0])
+                c = int(mc[r][1])
                 self.logs[i][r]['meaning'] = m
                 self.logs[i][r]['context'] = c
                 if r % 2 == 0:
-                    self.one_round(self.agents[0], 
-                                    self.agents[1], 
-                                    m, c, i, r)
+                    self.one_round(agents[0], 
+                                   agents[1], 
+                                   m, c, i, r)
                 else:
-                    self.one_round(self.agents[1], 
-                                    self.agents[0], 
+                    self.one_round(agents[1], 
+                                   agents[0], 
                                     m, c, i, r)
             
-            self.group_posterior.append(self.agents[0].prob_lexicon)
-            self.group_posterior.append(self.agents[1].prob_lexicon)
+            self.group_posterior.append(agents[0].prob_lexicon)
+            self.group_posterior.append(agents[1].prob_lexicon)
                         
     def save(self, rd=False):
         df = pd.DataFrame.from_dict({(i, r): self.logs[i][r]
                                         for i in self.logs.keys()
                                         for r in self.logs[i].keys()},
                                         orient='index').reset_index()
-        df.columns = ['trial', 'round', 'meaning', 'context', 'word', 'word_length', 'guess', 'correct', 'lexicon_a', 'lexicon_b', 'entropy_a', 'entropy_b']
+        df.columns = ['trial', 'round', 'meaning', 'context', 'word', 'word_length', 
+                      'guess', 'correct', 'lexicon_a', 'lexicon_b', 'entropy_a', 'entropy_b']
         if not rd:
             df.to_csv(f'src/data/logs/logs-{self.n_iter}-{int(self.alpha)}.csv', index=False)
         else:
@@ -200,6 +214,6 @@ if __name__ == '__main__':
     args.priors = np.array(args.priors.split(',')).astype(float)
     prior = args.priors / np.sum(args.priors)
     contexts = np.array([[1, 1, 0], [1, 0, 1]])
-    exp = Experiment(args.alpha, prior, args.costs, contexts, args.n_iter, 50, args.model)
+    exp = Experiment(args.alpha, prior, args.costs, contexts, args.n_iter, 42, args.model)
     exp.run()
     exp.save()
