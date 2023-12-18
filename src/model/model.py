@@ -1,7 +1,5 @@
-import os
 from collections import defaultdict
 import argparse
-from tqdm.auto import trange
 import numpy as np
 import pandas as pd
 from util import (generate_lexicons, 
@@ -37,7 +35,7 @@ class BaseRSA:
     def S_0(self, L, c):
         if c is None:
             return self.normalize(L.transpose(0, 2, 1) )
-        return self.normalize(np.exp(self.safelog(L.transpose(0, 2, 1)) - self.C))
+        return self.normalize(np.exp(self.alpha * self.safelog(L.transpose(0, 2, 1)) - self.C))
     
     def S_p(self, L, c=None):
         if c is None:
@@ -84,7 +82,6 @@ class Agent(BaseRSA):
             else:
                 return np.random.choice(np.arange(self.n_meanings), p=self.L_0(self.Lexicons, c)[lexicon_idx][w])
 
-    
     def update(self, w, m, c, correct, role):
         if role == "speaker":
             if self.model == "RSA":
@@ -121,7 +118,7 @@ class Agent(BaseRSA):
 
     def max_prob_L(self):
         return lex_to_str(self.Lexicons[np.argmax(self.prob_lexicon)])
-    
+
 
 class Experiment:
     def __init__(self, alpha, prior, C, contexts, n_iter, n_rounds, model):
@@ -155,10 +152,6 @@ class Experiment:
         self.logs[i][r]['word_length'] = self.C[w]
         self.logs[i][r]['guess'] = g
         self.logs[i][r]['correct'] = 1 if (m == g) else 0
-        self.logs[i][r]['lexicon_a'] = a.max_prob_L()
-        self.logs[i][r]['lexicon_b'] = b.max_prob_L()
-        self.logs[i][r]['entropy_a'] = entropy(a.prob_lexicon)
-        self.logs[i][r]['entropy_b'] = entropy(a.prob_lexicon)
     
     def run(self):
         for i in range(self.n_iter):
@@ -194,9 +187,9 @@ class Experiment:
                                         for r in self.logs[i].keys()},
                                         orient='index').reset_index()
         df.columns = ['trial', 'round', 'meaning', 'context', 'word', 'word_length', 
-                      'guess', 'correct', 'lexicon_a', 'lexicon_b', 'entropy_a', 'entropy_b']
+                      'guess', 'correct']
         if not rd:
-            df.to_csv(f'src/data/logs/logs-{self.n_iter}-{int(self.alpha)}.csv', index=False)
+            df.to_csv(f'src/data/logs/logs-{self.n_iter}-{int(self.alpha)}-{self.model}-{self.n_rounds}.csv', index=False)
         else:
             return df
           
@@ -208,12 +201,14 @@ if __name__ == '__main__':
     parser.add_argument('--costs', type=str)
     parser.add_argument('--priors', type=str)
     parser.add_argument('--model', type=str)
+    parser.add_argument('--n_rounds', type=int)
     args = parser.parse_args()
     args.model = "RSA" if args.model == "rsa" else "naive"
     args.costs = np.array(args.costs.split(',')).astype(float)
     args.priors = np.array(args.priors.split(',')).astype(float)
     prior = args.priors / np.sum(args.priors)
     contexts = np.array([[1, 1, 0], [1, 0, 1]])
-    exp = Experiment(args.alpha, prior, args.costs, contexts, args.n_iter, 42, args.model)
+    exp = Experiment(args.alpha, prior, args.costs, contexts, 
+                     args.n_iter, args.n_rounds, args.model)
     exp.run()
     exp.save()
